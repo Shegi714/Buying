@@ -88,7 +88,10 @@ def write_sales_to_sheet(sheet_obj, cabinet_name, sales):
         rows = [headers]
 
         for sale in sales:
-            row = [sale.get(h, "") for h in headers]
+            row = [
+                clean_barcode(sale.get(h, "")) if h == "barcode" else sale.get(h, "")
+                for h in headers
+            ]
             rows.append(row)
 
         worksheet.update(rows)
