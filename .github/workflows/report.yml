@@ -24,12 +24,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 📁 Распаковка GOOGLE_CREDS_B64 → JSON
-        run: |
-          mkdir -p creds
-          echo "${{ secrets.GOOGLE_CREDS_B64 }}" | base64 --decode > creds/service_account.json
-
-
       - name: 🚀 Запуск Python-скрипта
         env:
           SOURCE_SHEET_ID: ${{ secrets.SOURCE_SHEET_ID }}

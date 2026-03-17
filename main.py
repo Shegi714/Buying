@@ -5,25 +5,51 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+import argparse
 
-# 🧪 Глобальные переменные окружения (GitHub Secrets)
-SOURCE_SHEET_ID = os.environ.get("SOURCE_SHEET_ID")
-TARGET_SHEET_ID = os.environ.get("TARGET_SHEET_ID")
+load_dotenv()
 
-# ⚙️ Подключение к Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_json = os.environ.get("GOOGLE_CREDS_JSON")
-if not creds_json:
-    raise ValueError("GOOGLE_CREDS_JSON not set or empty!")
+SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
-creds_dict = json.loads(creds_json)
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
 
-# 📑 Чтение токенов и кабинетов
-source_sheet = client.open_by_key(SOURCE_SHEET_ID).sheet1
-rows = source_sheet.get_all_values()[1:]
-data = [{"token": row[0], "cabinet": row[1]} for row in rows if len(row) >= 2 and row[0].strip()]
+def get_env(name: str, *, required: bool = False) -> str | None:
+    value = os.environ.get(name)
+    if required and (value is None or not value.strip()):
+        raise ValueError(f"{name} is not set or empty.")
+    return value
+
+
+def load_google_creds_json() -> str:
+    creds_json = get_env("GOOGLE_CREDS_JSON")
+    if creds_json and creds_json.strip():
+        return creds_json
+
+    creds_path = get_env("GOOGLE_CREDS_PATH")
+    if creds_path and creds_path.strip():
+        try:
+            with open(creds_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError as e:
+            raise ValueError(f"Failed to read GOOGLE_CREDS_PATH file: {e}") from e
+
+    raise ValueError("Set GOOGLE_CREDS_JSON or GOOGLE_CREDS_PATH.")
+
+
+def create_gspread_client() -> gspread.Client:
+    creds_dict = json.loads(load_google_creds_json())
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
+    return gspread.authorize(creds)
+
+
+def read_cabinets_and_tokens(client: gspread.Client, source_sheet_id: str) -> list[dict[str, str]]:
+    source_sheet = client.open_by_key(source_sheet_id).sheet1
+    rows = source_sheet.get_all_values()[1:]
+    return [
+        {"token": row[0], "cabinet": row[1]}
+        for row in rows
+        if len(row) >= 2 and row[0].strip() and row[1].strip()
+    ]
 
 # 🔧 Очистка barcode от апострофа и принудительная запись как числа при необходимости
 def clean_barcode(value):
@@ -138,14 +164,26 @@ def write_sales_to_sheet(sheet_obj, cabinet_name, sales):
 
 # 🚀 Главная функция
 def main():
-    target_sheet = client.open_by_key(TARGET_SHEET_ID)
+    parser = argparse.ArgumentParser(description="Wildberries to Google Sheets report")
+    parser.add_argument("--days", type=int, default=14, help="How many days back to fetch sales (default: 14)")
+    args = parser.parse_args()
 
+    source_sheet_id = get_env("SOURCE_SHEET_ID", required=True)
+    target_sheet_id = get_env("TARGET_SHEET_ID", required=True)
+
+    client = create_gspread_client()
+    data = read_cabinets_and_tokens(client, source_sheet_id)
+    if not data:
+        print("⚠️ В таблице-источнике нет валидных строк (token + cabinet).")
+        return
+
+    target_sheet = client.open_by_key(target_sheet_id)
     for entry in data:
         cabinet = entry["cabinet"]
         token = entry["token"]
         print(f"\n🔄 Работаем с кабинетом: {cabinet}")
 
-        sales = fetch_sales(token, days=14)
+        sales = fetch_sales(token, days=args.days)
         write_sales_to_sheet(target_sheet, cabinet, sales)
 
 if __name__ == "__main__":
